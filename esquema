@@ -1,0 +1,64 @@
+/proyecto-agente-whatsapp
+│
+├── /api
+│   ├── __init__.py
+│   ├── whatsapp.py
+│   └── webhook.py
+│
+├── /backend
+│   ├── __init__.py
+│   ├── main.py
+│   ├── routes.py
+│   ├── utils.py
+│   └── exceptions.py
+│
+├── /data
+│   ├── pdfs/
+│   ├── embeddings/
+│   ├── logs/
+│   └── backups/
+│
+├── /models
+│   ├── __init__.py
+│   ├── language_model.py
+│   ├── embedding_model.py
+│   ├── fine_tuning.py
+│   └── model_utils.py
+│
+├── /pdf_processing
+│   ├── __init__.py
+│   ├── pdf_loader.py
+│   ├── text_chunker.py
+│   └── pdf_utils.py
+│
+├── /vector_db
+│   ├── __init__.py
+│   ├── chroma_utils.py
+│   ├── db_init.py
+│   └── query_utils.py
+│
+├── /repositories
+│   ├── __init__.py
+│   └── message_repository.py
+│
+├── /services
+│   ├── __init__.py
+│   ├── response_generator.py
+│   └── whatsapp_service.py
+│
+├── /tests
+│   ├── test_api.py
+│   ├── test_pdf.py
+│   └── test_vector_db.py
+│
+├── /docker
+│   ├── Dockerfile
+│   └── docker-compose.yml
+│
+├── /config
+│   ├── config.py
+│   └── secrets.env
+│
+├── requirements.txt
+├── README.md
+└── .gitignore

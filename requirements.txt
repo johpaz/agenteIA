@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pydantic
+sentence-transformers
+chromadb
+transformers
+PyPDF2
+bson
+motor
+pydantic-settings
+pymongo==4.9.2
+transformers
+tf-keras

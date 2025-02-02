@@ -1,0 +1,52 @@
+# Directorios generados automáticamente
+__pycache__/
+*.py[cod]
+
+# Archivos temporales
+*.tmp
+*.log
+*.sqlite3
+
+# Dependencias
+venv/
+env/
+pip-wheel-metadata/
+dist/
+build/
+*.egg-info/
+
+# Datos sensibles
+/data/pdfs/user_uploaded/
+/data/embeddings/user_uploaded/
+/data/logs/
+/data/backups/
+/config/secrets.env
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# IDEs y editores
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Archivos específicos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Archivos de prueba o desarrollo local
+*.env
+*.env.local
+*.env.*.local
+
+# Archivos binarios y compresiones
+*.zip
+*.rar
+*.tar.gz
+
+# Otros archivos innecesarios
+*.bak
+*.swp
+*~
