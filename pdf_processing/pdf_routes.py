@@ -1,18 +1,30 @@
 from fastapi import APIRouter, Request, Response, HTTPException, File, UploadFile
-from pdf_processing.preprocess_pdf import preprocess_pdf, save_processed_data,  preprocess_pdf
+from pdf_processing.preprocess_pdf import preprocess_pdf, save_processed_data
 from models.embedding_model import EmbeddingModel
-from vector_db.chroma_utils import add_embeddings_to_collection
+from vector_db.chroma_utils import ChromaClient
 import os
 import json
 
-
 router = APIRouter()
 
-# Ruta para cargar un PDF
+# Instanciar el cliente de ChromaDB
+chroma_client = ChromaClient()
+
+def save_processed_data(processed_data, json_path):
+    """Guarda los datos procesados en un archivo JSON, eliminando el archivo existente si es necesario."""
+    # Si el archivo ya existe, eliminarlo antes de crear uno nuevo
+    if os.path.exists(json_path):
+        os.remove(json_path)
+    
+    # Guardar el archivo JSON
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(processed_data, f, ensure_ascii=False, indent=4)
+
+# Ruta para cargar un PDF y transformarlo en JSON
 @router.post("/upload-pdf", tags=["PDF Upload"])
 async def upload_pdf(file: UploadFile = File(...)):
     """
-    Endpoint para cargar un archivo PDF.
+    Endpoint para cargar un archivo PDF, preprocesarlo y guardarlo como JSON.
     Args:
         file (UploadFile): Archivo PDF enviado por el usuario.
     Returns:
@@ -29,27 +41,19 @@ async def upload_pdf(file: UploadFile = File(...)):
         with open(temp_file_path, "wb") as buffer:
             buffer.write(await file.read())
 
-        # Preprocesar el PDF
+        # Preprocesar el PDF y obtener las secciones
         processed_data = preprocess_pdf(temp_file_path)
-        save_processed_data(processed_data, "data/processed_pdfs")
 
-        # Generar embeddings y almacenarlos en ChromaDB
-        embedding_model = EmbeddingModel()
-        sections = processed_data["sections"]
-        embeddings = [embedding_model.generate_embeddings(section) for section in sections]
-        ids = [f"{file.filename}_section_{i}" for i in range(len(sections))]
-        add_embeddings_to_collection("pdf_embeddings", sections, embeddings, ids)
+        # Guardar el JSON de las secciones procesadas
+        json_path = f"data/processed_pdfs/{file.filename.replace('.pdf', '.json')}"
+        save_processed_data(processed_data, json_path)
 
-        return {"message": "PDF cargado, procesado y almacenado exitosamente."}
+        return {"message": f"PDF cargado, procesado y almacenado como JSON exitosamente. Archivo JSON: {json_path}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al procesar el PDF: {str(e)}")
-    
 
 
-
-router = APIRouter()
-
-# Endpoint para lanzar el entrenamiento inicial
+# Endpoint para lanzar el entrenamiento usando los datos del JSON
 @router.post("/train", tags=["Training"])
 async def train_model():
     """
@@ -74,14 +78,18 @@ async def train_model():
         # Generar embeddings
         embedding_model = EmbeddingModel()
         embeddings = [embedding_model.generate_embeddings(section) for section in sections]
-        
+
+        # Verificar que las embeddings sean una lista de números flotantes
+        for idx, embedding in enumerate(embeddings):
+            if not all(isinstance(x, (int, float)) for x in embedding):
+                raise HTTPException(status_code=400, detail=f"Las embeddings en la sección {idx} no son válidas. Deben ser números flotantes o enteros.")
 
         # Crear IDs únicos para cada sección
         ids = [f"section_{i}" for i in range(len(sections))]
 
         # Almacenar en ChromaDB
         collection_name = "pdf_embeddings"
-        add_embeddings_to_collection(collection_name, sections, embeddings, ids)
+        chroma_client.add_embeddings_to_collection(collection_name, sections, embeddings, ids)
 
         return {"message": "Entrenamiento completado exitosamente. Datos almacenados en ChromaDB."}
     except Exception as e:

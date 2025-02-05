@@ -44,7 +44,9 @@
 ├── /services
 │   ├── __init__.py
 │   ├── response_generator.py
-│   └── whatsapp_service.py
+|── /repositories
+│   ├── __init__.py
+│   ├── message_repository.py   
 │
 ├── /tests
 │   ├── test_api.py

@@ -11,3 +11,10 @@ pydantic-settings
 pymongo==4.9.2
 transformers
 tf-keras
+langchain_text_splitters
+chromadb
+langchain-huggingface
+langchain
+langchain_deepseek
+langchain_huggingface
+huggingface_hub

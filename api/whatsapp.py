@@ -1,10 +1,10 @@
 from typing import Dict, Any
 import httpx
 from config.config import settings
-from services.response_generator import ResponseGenerator  # Nuevo servicio de generación de respuestas
+from models.language_model import LanguageModel  # Nuevo servicio de generación de respuestas
 
 # Inicialización del servicio de generación de respuestas
-response_generator = ResponseGenerator()
+response_generator = LanguageModel()
 
 class WhatsAppService:
     def __init__(self):

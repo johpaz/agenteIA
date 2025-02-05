@@ -1,52 +1,57 @@
-from fastapi.concurrency import run_in_threadpool
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
+import torch
+from models.user_model import UserDB
+from vector_db.chroma_utils import ChromaClient
+from langchain.chains import create_retrieval_chain
+from langchain_core.prompts import ChatPromptTemplate
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_deepseek import ChatDeepSeek
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+from huggingface_hub import login  # Importación necesaria para iniciar sesión en Hugging Face
+import os
 
 class LanguageModel:
-    def __init__(self, model_name: str = "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"):
-        """
-        Inicializa el modelo de lenguaje.
-        Args:
-            model_name (str): Nombre del modelo a cargar.
-        """
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name)
-
-    async def generate_response(self, messages: list, max_length: int = 150) -> str:
-        """
-        Genera una respuesta basada en una lista de mensajes con roles.
-        Args:
-            messages (list): Lista de mensajes con roles ("system", "user", "assistant").
-            max_length (int): Longitud máxima de la respuesta generada.
-        Returns:
-            str: Respuesta generada.
-        """
+    def __init__(self):
+        # Inicialización de la base de datos de usuarios y el cliente de Chroma
+        self.user_model = UserDB()
+        self.chroma_client = ChromaClient(persist_directory="./chroma_db")
+        self.hf_api_token = os.getenv("HUGGINGFACE_API_TOKEN")
+        
+    async def generate_response(self, user_message: str) -> str:
+        user_id = "679d76229037d7466b684ada"
         try:
-            # Aplicar el template de chat al tokenizer
-            inputs = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=True,
-                return_tensors="pt",
-                add_generation_prompt=True  # Añade el prompt para que el modelo genere una respuesta
+            # Obtención del prompt del sistema desde la base de datos de usuarios
+            system_prompt = await self.user_model.get_system_prompt(user_id)
+            
+            # Iniciar sesión en Hugging Face (se solicitará tu clave HF y se guardará localmente)
+            login(token=self.hf_api_token) 
+            
+            # Configuración del modelo de Hugging Face para generación de texto
+            llm = HuggingFaceEndpoint(
+                repo_id="microsoft/Phi-3-mini-4k-instruct",
+                task="text-generation",
+                max_new_tokens=512,   # Longitud máxima de respuesta
+                do_sample=False,
+                repetition_penalty=1.03,
             )
-
-            # Generar respuesta en un hilo separado
-            outputs = await run_in_threadpool(
-                self.model.generate,
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs["attention_mask"],
-                max_length=max_length
+            
+            # Creación del prompt combinando el mensaje del sistema y el del usuario
+            prompt = ChatHuggingFace.from_messages(
+                [
+                    ("system", system_prompt),
+                    ("human", user_message),
+                ]
             )
-
-            # Decodificar la respuesta
-            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-            # Extraer solo la parte generada por el modelo (después del último mensaje del usuario)
-            last_user_message_index = response.rfind("<|user|>")
-            if last_user_message_index != -1:
-                response = response[last_user_message_index:].split("<|assistant|>")[-1].strip()
-
-            return response
-
+            
+            # Creación de la cadena que combina documentos
+            chain = create_stuff_documents_chain(llm, prompt)
+            
+            # Creación de la cadena de recuperación (RAG: Retrieval-Augmented Generation)
+            rag = create_retrieval_chain(self.retriever, chain)
+            
+            # Ejecución de la cadena para generar la respuesta
+            results = rag.invoke({"input": user_message})
+            return results.get('answer', "No se pudo generar una respuesta.")
+        
         except Exception as e:
-            print(f"Error al generar la respuesta: {str(e)}")
-            return "Hubo un error al procesar tu mensaje. Por favor, inténtalo de nuevo."
+            return f"Error: {str(e)}"
