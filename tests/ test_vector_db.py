@@ -1,5 +1,5 @@
 import pytest
-from vector_db.chroma_utils import create_collection, add_embeddings_to_collection, query_collection
+from vector_db.pinecone_utils import create_collection, add_embeddings_to_collection, query_collection
 
 def test_chroma_db_operations():
     collection_name = "test_collection"

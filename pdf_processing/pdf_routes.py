@@ -1,96 +1,160 @@
-from fastapi import APIRouter, Request, Response, HTTPException, File, UploadFile
-from pdf_processing.preprocess_pdf import preprocess_pdf, save_processed_data
-from models.embedding_model import EmbeddingModel
-from vector_db.chroma_utils import ChromaClient
+from fastapi import APIRouter, HTTPException, UploadFile, File
 import os
-import json
+import pdfplumber
+import uuid
+import numpy as np
+from typing import List
+from pydantic import BaseModel
+import asyncio
+from pinecone import Pinecone, ServerlessSpec
+from sentence_transformers import SentenceTransformer
 
 router = APIRouter()
 
-# Instanciar el cliente de ChromaDB
-chroma_client = ChromaClient()
+# Configuración Pinecone
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+INDEX_NAME = "pdf-documents"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+BATCH_SIZE = 32
+EMBEDDING_DIM = 384  # Dimensión del modelo all-MiniLM-L6-v2
 
-def save_processed_data(processed_data, json_path):
-    """Guarda los datos procesados en un archivo JSON, eliminando el archivo existente si es necesario."""
-    # Si el archivo ya existe, eliminarlo antes de crear uno nuevo
-    if os.path.exists(json_path):
-        os.remove(json_path)
-    
-    # Guardar el archivo JSON
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(processed_data, f, ensure_ascii=False, indent=4)
+# Inicializar cliente Pinecone
+pc = Pinecone(api_key=PINECONE_API_KEY)
 
-# Ruta para cargar un PDF y transformarlo en JSON
-@router.post("/upload-pdf", tags=["PDF Upload"])
+# Crear índice si no existe
+if INDEX_NAME not in pc.list_indexes().names():
+    pc.create_index(
+        name=INDEX_NAME,
+        dimension=EMBEDDING_DIM,
+        metric="cosine",
+        spec=ServerlessSpec(
+            cloud="aws",
+            region="us-east-1"
+        )
+    )
+
+# Obtener referencia al índice
+index = pc.Index(INDEX_NAME)
+
+# Modelo de embeddings
+embedder = SentenceTransformer(EMBEDDING_MODEL)
+
+# Configuración de directorios
+UPLOAD_FOLDER = "data/pdfs/user_uploaded/"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+class PDFContent(BaseModel):
+    text: str
+    metadata: dict
+
+@router.post("/upload-pdf", tags=["PDF Management"])
 async def upload_pdf(file: UploadFile = File(...)):
-    """
-    Endpoint para cargar un archivo PDF, preprocesarlo y guardarlo como JSON.
-    Args:
-        file (UploadFile): Archivo PDF enviado por el usuario.
-    Returns:
-        dict: Respuesta indicando éxito o error.
-    """
+    """Endpoint para cargar PDFs con validación mejorada"""
     try:
-        # Validar que el archivo sea un PDF
         if not file.filename.lower().endswith(".pdf"):
-            raise HTTPException(status_code=400, detail="El archivo debe ser un PDF.")
+            raise HTTPException(400, "Solo se aceptan archivos PDF")
 
-        # Guardar el archivo temporalmente
-        temp_file_path = f"data/pdfs/user_uploaded/{file.filename}"
-        os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
-        with open(temp_file_path, "wb") as buffer:
-            buffer.write(await file.read())
+        file_id = uuid.uuid4().hex
+        safe_filename = f"{file_id}_{file.filename}"
+        file_path = os.path.join(UPLOAD_FOLDER, safe_filename)
+        
+        contents = await file.read()
+        if len(contents) > 50 * 1024 * 1024:
+            raise HTTPException(413, "Tamaño máximo excedido (50MB)")
+        
+        with open(file_path, "wb") as buffer:
+            buffer.write(contents)
 
-        # Preprocesar el PDF y obtener las secciones
-        processed_data = preprocess_pdf(temp_file_path)
+        return {
+            "message": "PDF almacenado exitosamente",
+            "file_id": file_id,
+            "filename": safe_filename
+        }
 
-        # Guardar el JSON de las secciones procesadas
-        json_path = f"data/processed_pdfs/{file.filename.replace('.pdf', '.json')}"
-        save_processed_data(processed_data, json_path)
-
-        return {"message": f"PDF cargado, procesado y almacenado como JSON exitosamente. Archivo JSON: {json_path}"}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al procesar el PDF: {str(e)}")
+        raise HTTPException(500, f"Error en la carga: {str(e)}")
 
-
-# Endpoint para lanzar el entrenamiento usando los datos del JSON
-@router.post("/train", tags=["Training"])
-async def train_model():
-    """
-    Endpoint para entrenar el modelo con los PDFs cargados previamente.
-    Returns:
-        dict: Respuesta indicando éxito o error.
-    """
+@router.post("/process-pdfs", tags=["Processing"])
+async def process_pdfs():
+    """Pipeline de procesamiento optimizado para Pinecone"""
     try:
-        # Leer el archivo JSON procesado
-        json_path = "data/processed_pdfs/tuprofe.json"
-        if not os.path.exists(json_path):
-            raise HTTPException(status_code=400, detail="No se encontró el archivo JSON procesado. Carga un PDF primero.")
+        pdf_files = [
+            f for f in os.listdir(UPLOAD_FOLDER) 
+            if f.endswith(".pdf") and os.path.isfile(os.path.join(UPLOAD_FOLDER, f))
+        ]
+        
+        if not pdf_files:
+            raise HTTPException(400, "No hay PDFs para procesar")
 
-        with open(json_path, "r", encoding="utf-8") as f:
-            processed_data = json.load(f)
+        tasks = [process_single_pdf(filename) for filename in pdf_files]
+        results = await asyncio.gather(*tasks)
 
-        # Extraer secciones del JSON
-        sections = processed_data.get("sections", [])
-        if not sections:
-            raise HTTPException(status_code=400, detail="El archivo JSON procesado no contiene secciones válidas.")
+        total_pages = sum(results)
+        if total_pages == 0:
+            raise HTTPException(400, "No se encontró texto válido")
 
-        # Generar embeddings
-        embedding_model = EmbeddingModel()
-        embeddings = [embedding_model.generate_embeddings(section) for section in sections]
+        return {
+            "message": "Procesamiento completado",
+            "total_pages": total_pages,
+            "indexed_documents": total_pages
+        }
 
-        # Verificar que las embeddings sean una lista de números flotantes
-        for idx, embedding in enumerate(embeddings):
-            if not all(isinstance(x, (int, float)) for x in embedding):
-                raise HTTPException(status_code=400, detail=f"Las embeddings en la sección {idx} no son válidas. Deben ser números flotantes o enteros.")
-
-        # Crear IDs únicos para cada sección
-        ids = [f"section_{i}" for i in range(len(sections))]
-
-        # Almacenar en ChromaDB
-        collection_name = "pdf_embeddings"
-        chroma_client.add_embeddings_to_collection(collection_name, sections, embeddings, ids)
-
-        return {"message": "Entrenamiento completado exitosamente. Datos almacenados en ChromaDB."}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error durante el entrenamiento: {str(e)}")
+        raise HTTPException(500, f"Error en el procesamiento: {str(e)}")
+
+async def process_single_pdf(filename: str) -> int:
+    """Procesamiento individual de PDF con manejo de errores"""
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    processed_pages = 0
+    
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            texts = []
+            metadatas = []
+            
+            for page_num, page in enumerate(pdf.pages):
+                text = page.extract_text()
+                if text and len(text) > 50:
+                    texts.append(text)
+                    metadatas.append({
+                        "source": filename,
+                        "page": page_num + 1,
+                        "file_id": filename.split("_")[0]
+                    })
+                    processed_pages += 1
+
+            if texts:
+                # Generar embeddings por lotes
+                embeddings = embedder.encode(
+                    texts,
+                    batch_size=BATCH_SIZE,
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True
+                )
+                
+                # Preparar vectores para Pinecone
+                vectors = []
+                for idx, (text, metadata) in enumerate(zip(texts, metadatas)):
+                    vector_id = f"{metadata['file_id']}_p{metadata['page']}"
+                    vectors.append({
+                        "id": vector_id,
+                        "values": embeddings[idx].tolist(),
+                        "metadata": metadata
+                    })
+                
+                # Upsert en batches
+                for i in range(0, len(vectors), BATCH_SIZE):
+                    batch = vectors[i:i+BATCH_SIZE]
+                    index.upsert(vectors=batch)
+                
+        os.remove(file_path)
+        return processed_pages
+
+    except Exception as e:
+        print(f"Error procesando {filename}: {str(e)}")
+        return 0

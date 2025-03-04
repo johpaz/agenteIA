@@ -1,4 +1,4 @@
-from .chroma_utils import create_collection, add_embeddings_to_collection
+from .pinecone_utils import create_collection, add_embeddings_to_collection
 from models.embedding_model import EmbeddingModel
 from pdf_processing.pdf_loader import load_pdf
 from models.model_utils import split_text_into_chunks

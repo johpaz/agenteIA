@@ -1,4 +1,4 @@
-from .chroma_utils import query_collection
+from .pinecone_utils import query_collection
 from models.embedding_model import EmbeddingModel
 
 # Inicialización del modelo de embeddings

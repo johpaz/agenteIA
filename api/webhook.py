@@ -1,58 +1,119 @@
-from fastapi import APIRouter, Request, Response, HTTPException
+from fastapi import APIRouter, Request, Response, HTTPException, Depends, status
 from typing import Dict, Any
-from api.dependencies import WhatsAppService
-from config.config import settings  # Configuración de entorno
+import logging
+from pydantic import BaseModel
+from api.dependencies import get_whatsapp_service, WhatsAppService
+from config.config import settings
 
-# Inicialización del enrutador y servicios necesarios
+# Configurar logging
+logger = logging.getLogger(__name__)
 router = APIRouter()
-whatsapp_service = WhatsAppService()
 
-# Endpoint para verificar el webhook con la API de WhatsApp
+# Modelo Pydantic para validación de eventos
+class WhatsAppEvent(BaseModel):
+    object: str
+    entry: list[dict]
+
 @router.get("/webhook")
-async def verify_webhook(request: Request):
-    mode = request.query_params.get("hub.mode")
-    token = request.query_params.get("hub.verify_token")
-    challenge = request.query_params.get("hub.challenge")
+async def verify_webhook(
+    request: Request,
+    whatsapp_service: WhatsAppService = Depends(get_whatsapp_service)
+):
+    """Verificación del webhook para Meta"""
+    try:
+        mode = request.query_params.get("hub.mode")
+        token = request.query_params.get("hub.verify_token")
+        challenge = request.query_params.get("hub.challenge")
 
-    if mode and token:
+        if not all([mode, token, challenge]):
+            raise HTTPException(status_code=400, detail="Parámetros faltantes")
+
         if mode == "subscribe" and token == settings.WHATSAPP_TOKEN:
-            return Response(content=challenge)  # Responde con el desafío si la verificación es exitosa
-        raise HTTPException(status_code=403, detail="Invalid verification token")
-    
-    raise HTTPException(status_code=400, detail="Invalid parameters")
+            logger.info("Webhook verificado exitosamente")
+            return Response(content=challenge)
+        
+        logger.warning("Token de verificación inválido")
+        raise HTTPException(status_code=403, detail="Token inválido")
 
-# Endpoint para procesar mensajes entrantes
+    except Exception as e:
+        logger.error(f"Error en verificación: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno")
+
 @router.post("/webhook")
-async def process_webhook(request: Request):
+async def process_webhook(
+    request: Request,
+    whatsapp_service: WhatsAppService = Depends(get_whatsapp_service)
+):
+    """Procesamiento de mensajes entrantes de Meta"""
     try:
         data = await request.json()
+        event = WhatsAppEvent(**data)
         if "entry" not in data or not data["entry"]:
             raise ValueError("No entries found in the webhook payload.")
 
-        for entry in data["entry"]:
+        
+        for entry in event.entry:
             for change in entry.get("changes", []):
-                if "value" in change and "messages" in change["value"]:
-                    for msg in change["value"]["messages"]:
-                        from_number = msg.get("from")
-                        if not from_number:
-                            print("No se encontró el número del remitente en el mensaje.")
-                            continue
+                if self._valid_change(change):
+                    await self._process_change(change, whatsapp_service)
 
-                        if "text" not in msg or "body" not in msg["text"]:
-                            print("El mensaje no contiene texto.")
-                            continue
+        return {"status": "success"}
 
-                        user_message = msg["text"]["body"]
-                        try:
-                            # Procesar el mensaje con el servicio de WhatsApp
-                            response_text = await whatsapp_service.process_incoming_message(msg)
-
-                            # Enviar respuesta a través de WhatsApp
-                            await whatsapp_service.send_message(to=from_number, message=response_text)
-                        except Exception as e:
-                            print(f"Error al procesar el mensaje: {str(e)}")
     except Exception as e:
-        print(f"Error processing webhook: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error procesando webhook: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno del servidor"
+        )
 
-    return {"status": "success"}
+def _valid_change(change: dict) -> bool:
+    """Valida la estructura del cambio según especificación de Meta"""
+    required = {
+        "value": {
+            "messaging_product": "whatsapp",
+            "metadata": ["display_phone_number", "phone_number_id"],
+            "messages": list
+        },
+        "field": str
+    }
+    
+    if not all(key in change for key in ["value", "field"]):
+        return False
+    
+    value = change["value"]
+    return all(
+        value.get("messaging_product") == "whatsapp",
+        isinstance(value.get("messages"), list),
+        all(key in value.get("metadata", {}) for key in required["value"]["metadata"])
+    )
+
+async def _process_change(change: dict, service: WhatsAppService):
+    """Procesa un cambio individual"""
+    try:
+        messages = change["value"].get("messages", [])
+        for msg in messages:
+            await self._handle_message(msg, service)
+    except Exception as e:
+        logger.error(f"Error procesando cambio: {str(e)}")
+        await service.log_error(change)
+
+async def _handle_message(msg: dict, service: WhatsAppService):
+    """Maneja un mensaje individual"""
+    try:
+        from_number = msg.get("from")
+        message_body = msg.get("text", {}).get("body", "")
+        
+        if not from_number or not message_body:
+            logger.warning("Mensaje incompleto: %s", msg)
+            return
+
+        # Procesar y responder
+        response = await service.process_incoming_message(msg)
+        await service.send_message(to=from_number, message=response)
+        
+    except Exception as e:
+        logger.error(f"Error manejando mensaje: {str(e)}")
+        await service.send_message(
+            to=from_number,
+            message="⚠️ Error procesando tu mensaje. Intenta nuevamente."
+        )

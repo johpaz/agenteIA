@@ -1,20 +1,32 @@
-fastapi
-uvicorn
-pydantic
-sentence-transformers
-chromadb
-transformers
-PyPDF2
-bson
-motor
-pydantic-settings
-pymongo==4.9.2
-transformers
-tf-keras
-langchain_text_splitters
-chromadb
-langchain-huggingface
-langchain
-langchain_deepseek
-langchain_huggingface
-huggingface_hub
+    fastapi
+    uvicorn
+    pydantic
+    sentence-transformers
+    transformers
+    PyPDF2
+    bson
+    motor
+    pydantic-settings
+    pymongo==4.9.2
+    transformers
+    tf-keras
+    langchain_text_splitters
+    langchain-huggingface
+    langchain
+    langchain_deepseek
+    langchain_huggingface
+    huggingface_hub
+    numpy
+    pdfplumber
+    langchain-chroma 
+    sentence-transformers 
+    langchain_community
+    langgraph
+    pinecone
+    loguru
+    redis[hiredis]
+    httpx 
+  
+   
+   
+    

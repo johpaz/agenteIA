@@ -19,8 +19,19 @@ class Settings(BaseSettings):
     TEMPLATE: Optional[str] = None  # Plantilla de mensaje predeterminada (si aplica)
 
     # Clave de API de Hugging Face
-    HF_API_KEY: str  # Clave de API para acceder a modelos de Hugging Face
-
+    HUGGINGFACE_API_TOKEN: str  # Clave de API para acceder a modelos de Hugging Face
+    
+     # Clave de API Pinecone
+    PINECONE_API_KEY:  str  # Clave de API para acceder a Pinecone
+    
+    PINECONE_ENV :str
+    
+    #Redis 
+    REDIS_HOST: str
+    REDIS_PORT: str
+    REDIS_PASSWORD: str
+    WHATSAPP_RATE_LIMIT: int = 15
+    CACHE_TTL: int = 3600
     class Config:
         env_file = ".env"  # Cargar variables de entorno desde el archivo .env
         env_file_encoding = "utf-8"  # Codificación del archivo .env
@@ -37,7 +48,9 @@ def validate_settings():
         "VERIFY_TOKEN",
         "WHATSAPP_TOKEN",
         "PHONE_NUMBER_ID",
-        "HF_API_KEY",
+        "HUGGINGFACE_API_TOKEN",
+        "PINECONE_API_KEY",
+        "PINECONE_ENV"
     ]
     missing_vars = [var for var in critical_vars if not getattr(settings, var)]
     if missing_vars:
