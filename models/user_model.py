@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr
 from pymongo import MongoClient
+from bson import SON
 from datetime import datetime
 import os
 from models.model import UserModel 

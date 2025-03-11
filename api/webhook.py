@@ -15,10 +15,7 @@ class WhatsAppEvent(BaseModel):
     entry: list[dict]
 
 @router.get("/webhook")
-async def verify_webhook(
-    request: Request,
-    whatsapp_service: WhatsAppService = Depends(get_whatsapp_service)
-):
+async def verify_webhook(request: Request):
     """Verificación del webhook para Meta"""
     try:
         mode = request.query_params.get("hub.mode")
@@ -40,13 +37,11 @@ async def verify_webhook(
         raise HTTPException(status_code=500, detail="Error interno")
 
 @router.post("/webhook")
-async def process_webhook(
-    request: Request,
-    whatsapp_service: WhatsAppService = Depends(get_whatsapp_service)
-):
+async def process_webhook(self,request: Request, whatsapp_service: WhatsAppService = Depends(get_whatsapp_service)):
     """Procesamiento de mensajes entrantes de Meta"""
     try:
         data = await request.json()
+        print(data)
         event = WhatsAppEvent(**data)
         if "entry" not in data or not data["entry"]:
             raise ValueError("No entries found in the webhook payload.")
